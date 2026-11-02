@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: discovery-server
+  namespace: payflow
+spec:
+  selector: { app: discovery-server }
+  ports: [{ port: 8761, targetPort: 8761 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: discovery-server
+  namespace: payflow
+  labels: { app: discovery-server, app.kubernetes.io/part-of: payflow }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: discovery-server }
+  strategy:
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }   # zero-downtime deploys
+  template:
+    metadata:
+      labels: { app: discovery-server, tier: infra }
+    spec:
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: discovery-server
+          image: payflow/discovery-server:1.0.0
+          imagePullPolicy: IfNotPresent
+          ports: [{ containerPort: 8761 }]
+          env:
+            - { name: EUREKA_HOSTNAME, value: discovery-server }
+          readinessProbe:      # traffic only once Spring says it is ready
+            httpGet: { path: /actuator/health/readiness, port: 8761 }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:       # restart if the JVM is wedged
+            httpGet: { path: /actuator/health/liveness, port: 8761 }
+            initialDelaySeconds: 60
+            periodSeconds: 15
+          lifecycle:
+            preStop:           # give the load balancer time to stop routing before shutdown
+              exec: { command: ["sh", "-c", "sleep 5"] }
+          resources:
+            requests: { cpu: 200m, memory: 384Mi }
+            limits: { memory: 640Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: {}

@@ -1,0 +1,15 @@
+# Backend services trust the X-User-* headers set by the gateway, so they must accept traffic
+# only from pods inside this namespace (gateway and each other), never from the ingress
+# controller or other namespaces. Needs a CNI that enforces policies (Calico, Cilium...).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backend-internal-only
+  namespace: payflow
+spec:
+  podSelector:
+    matchLabels: { tier: backend }
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector: {}

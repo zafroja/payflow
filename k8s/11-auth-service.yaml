@@ -1,0 +1,64 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+  namespace: payflow
+spec:
+  selector: { app: auth-service }
+  ports: [{ port: 8081, targetPort: 8081 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+  namespace: payflow
+  labels: { app: auth-service, app.kubernetes.io/part-of: payflow }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: auth-service }
+  strategy:
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }   # zero-downtime deploys
+  template:
+    metadata:
+      labels: { app: auth-service, tier: backend }
+    spec:
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: auth-service
+          image: payflow/auth-service:1.0.0
+          imagePullPolicy: IfNotPresent
+          ports: [{ containerPort: 8081 }]
+          envFrom:
+            - configMapRef: { name: payflow-config }
+          env:
+            - name: JWT_SECRET
+              valueFrom: { secretKeyRef: { name: payflow-secrets, key: JWT_SECRET } }
+            - name: DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: payflow-secrets, key: DB_PASSWORD } }
+            - name: ADMIN_PASSWORD
+              valueFrom: { secretKeyRef: { name: payflow-secrets, key: ADMIN_PASSWORD } }
+          readinessProbe:      # traffic only once Spring says it is ready
+            httpGet: { path: /actuator/health/readiness, port: 8081 }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:       # restart if the JVM is wedged
+            httpGet: { path: /actuator/health/liveness, port: 8081 }
+            initialDelaySeconds: 60
+            periodSeconds: 15
+          lifecycle:
+            preStop:           # give the load balancer time to stop routing before shutdown
+              exec: { command: ["sh", "-c", "sleep 5"] }
+          resources:
+            requests: { cpu: 200m, memory: 384Mi }
+            limits: { memory: 640Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: {}
